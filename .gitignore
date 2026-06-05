@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# datasets and raw data
+AlertBERT/alerts_csv/
+AlertBERT/alerts_json/
+AlertBERT/aitads_augmented/data/
+
+# trained models and logs
+AlertBERT/saved_models/
+*.log
+
+# other potentially generated files
+.DS_Store
+
+.vscode/
+pretrained_models/
+AlertBERT/saved_models
+data/

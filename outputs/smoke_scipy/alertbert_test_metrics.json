@@ -1,0 +1,18 @@
+{
+  "alertbert_macro_noise": {
+    "precision": NaN,
+    "recall": NaN,
+    "tnr": NaN,
+    "f1": NaN,
+    "mcc": NaN,
+    "accuracy": NaN
+  },
+  "alertbert_macro_clean": {
+    "precision": NaN,
+    "recall": NaN,
+    "tnr": NaN,
+    "f1": NaN,
+    "mcc": NaN,
+    "accuracy": NaN
+  }
+}

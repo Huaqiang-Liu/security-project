@@ -1,0 +1,3 @@
+[submodule "AlertBERT"]
+	path = AlertBERT
+	url = https://github.com/ait-aecid/AlertBERT

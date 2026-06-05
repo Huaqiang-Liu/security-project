@@ -1,0 +1,16 @@
+{
+  "attack_precision": 0.0,
+  "attack_recall": 0.0,
+  "attack_f1": 0.0,
+  "false_positive_alerts_retained": 2048,
+  "false_negative_attack_alerts": 0,
+  "auto_benign_alerts": 0,
+  "total_alerts": 2048,
+  "total_clusters": 173,
+  "llm_clusters": 1,
+  "llm_cluster_ratio": 0.005780346820809248,
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "pure_llm_cluster_token_estimate": 0,
+  "alerts_per_cluster_prompt_cap": 20
+}

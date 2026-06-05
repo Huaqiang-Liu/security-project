@@ -1,0 +1,1 @@
+{"cluster": 102, "cluster_size": 14, "true_attack_alerts": 0, "true_attack_ratio": 0.0, "input_tokens": 0, "output_tokens": 0, "seconds": 0.00010061264038085938, "decision": "uncertain", "attack_type": "unknown", "confidence": 0.0, "rationale": "llm disabled", "raw_text": ""}

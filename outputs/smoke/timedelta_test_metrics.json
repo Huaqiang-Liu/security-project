@@ -1,0 +1,18 @@
+{
+  "noise": {
+    "precision": NaN,
+    "recall": NaN,
+    "tnr": NaN,
+    "f1": NaN,
+    "mcc": NaN,
+    "accuracy": NaN
+  },
+  "clean": {
+    "precision": NaN,
+    "recall": NaN,
+    "tnr": NaN,
+    "f1": NaN,
+    "mcc": NaN,
+    "accuracy": NaN
+  }
+}
