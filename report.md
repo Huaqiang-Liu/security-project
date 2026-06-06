@@ -147,7 +147,7 @@ python experiments/plot_experiment_assets.py \
   --asset-dir experiments/assets
 ```
 
-我们将比较三点：AlertBERT 相比 TimeDelta 是否提升了攻击告警聚类质量；Hybrid 是否只用很小比例的 Qwen 调用覆盖低置信度簇并提供结构化分诊；按需调用与“所有告警直接交给 LLM”的 Token 成本差距。
+我们将比较三点：时间规则、纯 AlertBERT 和 Hybrid 在 SOC 告警分诊流程中的行为差异；Hybrid 是否只用很小比例的 Qwen 调用覆盖低置信度簇并提供结构化分诊；按需调用与“所有告警直接交给 LLM”的 Token 成本差距。
 
 ### 4.7 实验结果
 
@@ -171,9 +171,9 @@ python experiments/plot_experiment_assets.py \
 
 ![Metric comparison](experiments/assets/fig6_metric_comparison.png)
 
-图 6 汇总了 TimeDelta、AlertBERT 和 Hybrid triage 的关键指标。需要说明的是，TimeDelta 与 AlertBERT 使用的是聚类/分组评估口径，而 Hybrid triage 使用的是攻击告警是否被保留给分析师的分诊口径，二者不能被简单理解为同一指标体系下的直接替代关系。TimeDelta 的 recall 为 0.9475，说明它倾向于把相关攻击告警合并在一起；但 precision 只有 0.2258，TNR 为 0.5579，说明它也会把大量噪声混进攻击簇。AlertBERT 的 precision 提升到 0.3419，TNR 提升到 0.9936，表明语义聚类显著降低了误合并噪声的风险；代价是 recall 降到 0.6021，macro F1 为 0.2225，略低于 TimeDelta 的 0.2374。因此，AlertBERT 并不是在所有指标上压倒 TimeDelta，而是提供了更保守、更高精度、更强噪声隔离的聚类结果。
+图 6 汇总了 TimeDelta、AlertBERT 和 Hybrid triage 的关键指标。本项目使用这些指标的目的不是复现 AlertBERT 论文中的基线竞争，而是说明不同处理方式在 SOC 工作流中的行为差异。TimeDelta 的 recall 为 0.9475，但 precision 只有 0.2258、TNR 为 0.5579，说明单纯依赖时间窗口容易把噪声和攻击合并到同一批事件中；AlertBERT 的 precision 提升到 0.3419、TNR 提升到 0.9936，说明语义聚类更适合作为第一层噪声隔离器，但 recall 降到 0.6021，意味着它仍会产生需要进一步解释的边界簇。Hybrid triage 正是在这个位置接入 LLM：不替代 AlertBERT 的底层聚类，而是对低置信度簇补充分诊标签、解释理由和复核优先级。
 
-Hybrid triage 的攻击保留 precision 为 0.8631，recall 接近 1.0，F1 为 0.9265。这里的高 recall 来自安全优先策略：除高置信度 benign 外，其余 `attack`、`uncertain` 和普通 review 簇都保留给分析师，因此几乎不会漏掉攻击。正式结果中 false negative 为 1，来源是一个真实攻击单点簇被 Qwen 判为 benign。这个结果说明 Hybrid 的优势不在于改变 AlertBERT 的底层聚类边界，而在于对聚类后的低置信度样本提供结构化解释和分诊排序；同时，自动 benign 策略必须谨慎，尤其是单点告警不应直接彻底丢弃。
+Hybrid triage 的攻击保留 precision 为 0.8631，recall 接近 1.0，F1 为 0.9265。这里的高 recall 来自安全优先策略：除高置信度 benign 外，其余 `attack`、`uncertain` 和普通 review 簇都保留给分析师，因此几乎不会漏掉攻击。正式结果中 false negative 为 1，来源是一个真实攻击单点簇被 Qwen 判为 benign。这个结果说明 Hybrid 相比纯 AlertBERT 的主要区别是分诊层面的：纯 AlertBERT 只能输出簇及其不确定度，而 Hybrid 能把一部分低置信度簇进一步标记为 benign 或 uncertain，并给出可读解释；同时，自动 benign 策略必须谨慎，尤其是单点告警不应直接彻底丢弃。
 
 ![Token cost](experiments/assets/fig7_token_cost.png)
 
@@ -181,13 +181,13 @@ Hybrid triage 的攻击保留 precision 为 0.8631，recall 接近 1.0，F1 为 
 
 ![Qwen triage](experiments/assets/fig8_qwen_triage.png)
 
-图 8 展示 Qwen 对低置信度簇的分诊输出。20 个簇中，18 个被判为 benign，2 个被判为 uncertain。Qwen 的解释大多指向 ClamAV 数据库更新、监控 CPU 指标异常、DNS 日志异常、HTTP method 频率异常等运维或低上下文告警。这说明 Qwen 能给出结构化分诊理由，也能把不确定 DNS 异常保守地保留为 uncertain。但其中 1 个真实攻击告警被解释为 CPU 指标异常并判为 benign，说明 LLM 在缺少上下文的单点告警上存在误判风险。
+图 8 展示 Qwen 对低置信度簇的分诊输出。20 个簇中，18 个被判为 benign，2 个被判为 uncertain；结合真实标签看，其中 17 个真实噪声/误报告警被正确降级为 benign，2 个真实噪声 DNS 异常被保守保留为 uncertain，1 个真实攻击告警被误判为 benign。相比纯 AlertBERT 只能把这些样本呈现为高不确定度单点簇，Qwen 额外给出了 20 条簇级解释，并具体识别出 11 个 ClamAV 数据库更新告警、2 个真实 CPU/监控类误报告警、2 个 HTTP method 频率异常、1 个 DNS 频率异常和 1 个 CMS 登录低风险告警。这说明 LLM 的价值主要体现在把 AlertBERT 的“难以归并”结果转化为可读的系统/运维告警解释和复核建议；但其中 1 个攻击单点簇被解释为 CPU 指标异常，也说明低上下文单点告警不能仅凭 LLM 结论自动丢弃。
 
 ## 5 结论
 
 1. 数据和流程满足课程项目要求，能够展示真实攻击与误报混杂场景下的 SOC 告警降噪。
 2. Hybrid 方法达到了“低成本调用 LLM”的预期：只处理 0.21% 的簇，节省约 99.79% 的 cluster-level LLM Token 成本，同时保持接近 1.0 的攻击召回。
-3. Qwen 的分诊解释有实际价值，但本次实验出现 1 个 false negative，说明高不确定度单点告警即使被判 benign，也更适合作为低优先级复核，而不是自动丢弃。
+3. Qwen 的分诊解释有可量化收益：在纯 AlertBERT 只能输出高不确定度单点簇的情况下，Hybrid 对 20 个簇补充了结构化解释，正确识别并降级 17 个真实误报/系统运维类告警，同时把 2 个 DNS 异常保留为 uncertain；但本次实验也出现 1 个 false negative，说明高不确定度单点告警即使被判 benign，也更适合作为低优先级复核，而不是自动丢弃。
 整体而言，Hybrid 优于纯 AlertBERT 的地方是聚类后的分诊可用性、解释性和 Token 成本控制，而不是底层聚类指标本身。
 
 # 杂项
@@ -200,9 +200,9 @@ TODO：我也不知道这个“安全评估”应该写什么，现在这个仅�
 1. 时效性：本方案没有采用传统的孤立森林、SVM 等浅层机器学习方法作为核心，而是采用面向安全告警语义建模的无监督掩码语言模型 AlertBERT，并结合本地开源大语言模型 Qwen3-8B 的生成式推理能力。前者适合大规模、低成本的告警嵌入与聚类，后者适合对少量低置信度样本进行上下文解释和结构化分诊。
 2. 与现有工作对比 (Comparison with Existing Work)：
    本项目的实验形成了三维对比：
-   - vs. TimeDelta baseline：验证语义模型是否比单纯时间间隔聚类更能隔离噪声。结果显示 AlertBERT 显著提升 precision 和 TNR，但在 recall 与 macro F1 上存在取舍。
-   - vs. 纯 AlertBERT：验证引入 LLM 后是否能提升聚类后的分诊可用性。Hybrid 不改变 AlertBERT 的底层聚类结果，而是在低置信度簇上提供结构化判断、风险解释和人工复核优先级。
-   - vs. 纯 LLM：验证直接让 LLM 处理所有簇在成本上是否可行。实验中按需调用只覆盖 0.21% 的簇，Token 成本约为全簇 LLM 分诊估算值的 0.21%，说明混合架构更适合实际 SOC 中的大规模告警流。
+   - vs. 时间规则分组：TimeDelta 召回率高但 precision 和 TNR 较低，说明它容易把噪声混入攻击事件；Hybrid 使用 AlertBERT 作为语义降噪层，再把疑难簇交给 LLM，而不是仅依赖时间窗口。
+   - vs. 纯 AlertBERT：纯 AlertBERT 能完成簇级压缩和噪声隔离，但不会解释低置信度单点簇的具体含义。Hybrid 在 20 个低置信度簇上额外提供结构化判断，正确降级 17 个真实误报/系统运维类告警，并将 2 个 DNS 异常保留为 uncertain。
+   - vs. 纯 LLM：直接让 LLM 处理所有簇在成本上不可扩展。实验中按需调用只覆盖 0.21% 的簇，Token 成本约为全簇 LLM 分诊估算值的 0.21%，说明混合架构更适合实际 SOC 中的大规模告警流。
 
 ## 组内分工
 TODO: 待填充
