@@ -22,3 +22,4 @@ data/
 outputs/smoke*
 
 log.txt
+smoke_test.md
