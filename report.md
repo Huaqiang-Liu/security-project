@@ -48,10 +48,14 @@ E3. 基于AI的安全运营自动化与威胁情报提取 (CTI)
    - 调用本地 Qwen-3-8B 进行研判分类。
    - 对比 AlertBERT + LLM 与纯 AlertBERT 在聚类准确性上的提升，并重点统计 LLM 调用的 Token 消耗量，绘制“准确率 vs. Token 开销”的权衡曲线，证明在极低的 Token 成本下可获得研判能力的显著提升。
 
+本方法流程图见图1。
+![Flow Chart](experiments/assets/fig1_flowchart.png)
+
+
 ## 4. 实验操作流程与代码说明
 实验脚本 `experiments/hybrid_alertbert_qwen.py`直接复用 AlertBERT 代码、AIT-ADS-A 增强数据和本地 Qwen3-8B 权重，形成可执行的端到端 Demo。
 
-### 4.1 实验环境验证
+### 4.1 实验环境
 开发与测试过程中，代码运行在 conda 环境中，使用 `AlertBERT/requirements.txt` 进行初始化。机器可见 8 张 NVIDIA RTX A6000，驱动版本 550.163.01，CUDA 12.4，`torch` 版本为 `2.6.0+cu124`。
 
 脚本提供环境检查入口：
@@ -61,12 +65,12 @@ python experiments/hybrid_alertbert_qwen.py verify-env \
   --output-dir outputs/env_check
 ```
 
-该命令会检查 CUDA、GPU 数量、`graph_tool`、AlertBERT 目录和 Qwen3-8B 权重路径，并将结果写入 `outputs/env_check/env.json`。实际验证中，沙箱外环境能够看到 8 张 A6000，且 `graph_tool` 可用。需要注意的是，`torch` 和 `graph_tool` 存在 `libgomp` 导入顺序冲突：若先导入 `torch` 再导入 `graph_tool`，可能出现 `GOMP_5.0` 符号缺失。实验脚本已经在任何 `torch` 导入前预加载 `graph_tool`，避免该问题。
+该命令会检查 CUDA、GPU 数量、`graph_tool`、AlertBERT 目录和 Qwen3-8B 权重路径，并将结果写入 `outputs/env_check/env.json`。
 
 ### 4.2 数据与基线
 实验使用 `AlertBERT/aitads_augmented/configs/simul-attacks.json` 对应的 AIT-ADS-A 并发攻击配置。该配置把不同 AIT-ADS 场景中的攻击和噪声重新组合，用于测试模型在高噪声和攻击重叠情况下的告警分组能力。
 
-ait_ads数据集应该解压在`项目根目录/data`中，即`labels.csv`的路径为`data/ait_ads/labels.csv`
+ait_ads数据集应该解压在`data/`中，即`labels.csv`的路径为`data/ait_ads/labels.csv`
 
 对比方法包括三组：
 
@@ -83,7 +87,7 @@ ait_ads数据集应该解压在`项目根目录/data`中，即`labels.csv`的路
 - `theta = [32, 64, 128, 256]`
 - 只保留 `theta >= delta` 的组合
 
-默认完整实验命令如下：
+完整实验命令：
 
 ```bash
 python experiments/hybrid_alertbert_qwen.py run \
@@ -97,25 +101,7 @@ python experiments/hybrid_alertbert_qwen.py run \
   --output-dir outputs/hybrid_alertbert_qwen
 ```
 
-如果只需要验证脚本能跑通，可以运行截断版 smoke test：
-
-```bash
-python experiments/hybrid_alertbert_qwen.py run \
-  --config simul-attacks \
-  --eval-split test \
-  --quick \
-  --quick-delta 24 \
-  --quick-theta 128 \
-  --max-scenarios 1 \
-  --max-alerts-per-scenario 2048 \
-  --llm-mode off \
-  --max-llm-clusters 1 \
-  --device cuda:1 \
-  --component-library scipy \
-  --output-dir outputs/smoke_scipy
-```
-
-该 smoke test 已经在本项目环境中跑通，并生成 `clusters.csv`、`cluster_uncertainty.csv`、`alertbert_test_metrics.json`、`timedelta_test_metrics.json`、`hybrid_metrics.json`、`qwen_decisions.jsonl` 和 `summary.md`。由于 smoke test 只截取每个场景开头的 2048 条告警，可能没有攻击标签，因此部分聚类指标会出现 `NaN`；这只用于验证代码通路，不作为最终实验结论。
+> 实验运行时，日志中的 `RuntimeWarning: Mean of empty slice` 和 `Degrees of freedom <= 0 for slice` 来自 AlertBERT 原评估函数在计算分层 macro 指标时，对某些在当前 split 或当前 scenario 中不存在的攻击标签执行 `nanmean/nanstd`。由于 AIT-ADS-A 的攻击标签分布是不均匀的，并不是每个攻击阶段都会出现在每个场景中，所以这些空切片 warning 是预期现象。
 
 ### 4.4 低置信度簇筛选
 Hybrid 方法的关键不是把全部告警交给 LLM，而是只挑出 AlertBERT 难以确定的簇。脚本为每个簇计算不确定度分数，特征包括：
@@ -151,23 +137,21 @@ Qwen3-8B 的 prompt 输入为簇内最多 20 条代表性告警，字段包括 `
 - `cluster_uncertainty.csv`：每个簇的不确定度、簇大小、真实攻击比例等；
 - `qwen_decisions.jsonl`：Qwen 或规则分诊对低置信度簇的输出；
 - `hybrid_metrics.json`：Hybrid 的攻击识别 precision、recall、F1、LLM 调用比例、Token 消耗和纯 LLM 成本估计；
-- `summary.md`：可直接用于汇报的摘要表。
+- `summary.md`：结果摘要表。
 
-最终报告重点比较三点：第一，AlertBERT 相比 TimeDelta 是否提升了攻击告警聚类质量；第二，Hybrid 是否只用很小比例的 Qwen 调用覆盖低置信度簇；第三，按需调用与“所有告警直接交给 LLM”的 Token 成本差距。这样既回应了“与现有工作对比”的要求，也能说明本方案在工程上比纯 LLM 更可部署。
-
-### 4.7 实验结果与结论
-
-画图脚本 `experiments/plot_experiment_assets.py`，用于从实验输出目录读取 `clusters.csv`、`cluster_uncertainty.csv`、`hybrid_metrics.json`、`qwen_decisions.jsonl` 等文件，并生成可视化图片。当前图片基于已经跑通的 `outputs/smoke_qwen_256` 结果生成，主要用于展示实验链路、数据结构、低置信度筛选和 Qwen 分诊效果。正式完整实验运行后，可用同一脚本重新生成图片：
+画图脚本 `experiments/plot_experiment_assets.py` 会从实验输出目录读取 `clusters.csv`、`cluster_uncertainty.csv`、`hybrid_metrics.json`、`qwen_decisions.jsonl` 等文件，并生成可视化结果。
 
 ```bash
-/home/lhq/miniconda3/envs/dl/bin/python experiments/plot_experiment_assets.py \
+python experiments/plot_experiment_assets.py \
   --results-dir outputs/hybrid_alertbert_qwen \
   --asset-dir experiments/assets
 ```
 
-如果不指定 `--results-dir`，脚本会优先读取 `outputs/hybrid_alertbert_qwen`；若该目录不存在，则自动退回到 `outputs/smoke_qwen_256` 或 `outputs/smoke_scipy`。
+我们将比较三点：AlertBERT 相比 TimeDelta 是否提升了攻击告警聚类质量；Hybrid 是否只用很小比例的 Qwen 调用覆盖低置信度簇；按需调用与“所有告警直接交给 LLM”的 Token 成本差距。
 
-图 1 展示了本项目的总体实验链路：AIT-ADS-A 混合告警流先进入 TimeDelta 和 AlertBERT baseline；AlertBERT 负责大规模语义聚类；随后只对低置信度簇计算不确定度并调用 Qwen3-8B；最终把 `attack` 和 `uncertain` 结果保留给分析师复核。该流程体现了“小模型处理规模，大模型处理疑难”的设计原则。
+### 4.7 实验结果
+
+测试集共包含 499257 条告警，其中攻击告警 430880 条，噪声/误报告警 68377 条。AlertBERT 将这些告警聚为 9440 个簇，平均每簇约 52.9 条告警。也就是说，在进入人工分析前，系统已经把逐条告警视角压缩为簇视角，这是本项目最直接的降噪收益。
 
 ![AIT-ADS attack phase matrix](experiments/assets/fig2_attack_phase_matrix.png)
 
@@ -175,39 +159,46 @@ Qwen3-8B 的 prompt 输入为簇内最多 20 条代表性告警，字段包括 `
 
 ![Cluster overview](experiments/assets/fig3_cluster_overview.png)
 
-图 3 展示了当前结果集中告警组成和 AlertBERT 聚类后的最大簇规模。由于当前图片来自 smoke test，截断样本主要用于验证通路，因此攻击告警数量可能为 0；正式实验需要使用完整 validation/test split 后重新生成该图。该图在 PPT 中可以用于说明聚类后的告警压缩效果：分析师面对的是簇，而不是逐条原始告警。
+图 3 展示了正式测试集中的告警组成和 AlertBERT 聚类后的最大簇规模。正式结果中攻击告警占比较高，主要原因是 test split 中 `dirb` 阶段告警数量极大，约 414858 条。这说明 AIT-ADS-A 的类别分布高度不均衡，评估时不能只看总体准确率，而应同时观察 precision、recall、TNR 和聚类压缩效果。
 
 ![Uncertainty distribution](experiments/assets/fig4_uncertainty_distribution.png)
 
-图 4 展示了簇级不确定度分布。红色虚线表示默认的 Top 5% handoff 阈值。该图说明我们不是随机调用 LLM，而是只挑选 AlertBERT 最不确定的一小部分簇进入 Qwen 分诊，从而控制 Token 成本和推理延迟。
+图 4 展示了簇级不确定度分布。红色虚线表示默认的 Top 5% handoff 阈值。测试中设置 `--max-llm-clusters 20`，所以最终只有 20 个簇进入 Qwen3-8B 分诊。相对于全部 9440 个簇，LLM 处理比例仅为 0.21%。这说明该系统没有把大模型当作全量处理器，而是作为低置信度样本的按需分诊器。
 
 ![Cluster size vs uncertainty](experiments/assets/fig5_cluster_size_vs_uncertainty.png)
 
-图 5 展示簇大小与不确定度之间的关系。横轴是簇大小，使用 log scale；纵轴是不确定度；颜色表示真实攻击比例。该图可以帮助观察哪些类型的簇更容易进入 LLM handoff：通常单点簇、语义混杂簇、时间跨度较大的簇会有更高不确定度。
+图 5 展示簇大小与不确定度之间的关系。正式实验中，被 Qwen 选中的 20 个低置信度簇全部是单点簇，其中 19 个是噪声或误报，1 个是真实攻击告警。这说明当前不确定度策略能较好地找到“AlertBERT 难以归并的孤立点”，但也暴露了一个安全边界：孤立攻击告警可能缺少上下文，Qwen 容易把它解释为普通运维异常。因此，实际部署中不应直接丢弃 Qwen 判为 benign 的高不确定度单点告警，而应将其放入低优先级复核队列。
 
 ![Metric comparison](experiments/assets/fig6_metric_comparison.png)
 
-图 6 用于汇总 TimeDelta、AlertBERT 和 Hybrid triage 的 F1 对比。当前 smoke test 因为截断样本缺少攻击标签，部分 baseline 指标会显示为 `n/a`；正式实验完成后，这张图会自动填入完整指标。该图在最终 PPT 中用于回应“与现有工作对比”的要求。
+图 6 汇总了 TimeDelta、AlertBERT 和 Hybrid triage 的关键指标。TimeDelta 的 recall 为 0.9475，说明它倾向于把相关攻击告警合并在一起；但 precision 只有 0.2258，TNR 为 0.5579，说明它也会把大量噪声混进攻击簇。AlertBERT 的 precision 提升到 0.3419，TNR 提升到 0.9936，表明语义聚类显著降低了误合并噪声的风险；代价是 recall 降到 0.6021，macro F1 为 0.2225，略低于 TimeDelta 的 0.2374。因此，AlertBERT 并不是在所有指标上压倒 TimeDelta，而是提供了更保守、更高精度、更强噪声隔离的聚类结果。
+
+Hybrid triage 的攻击识别 precision 为 0.8631，recall 接近 1.0，F1 为 0.9265。这里的高 recall 来自安全优先策略：除高置信度 benign 外，其余 `attack`、`uncertain` 和普通 review 簇都保留给分析师，因此几乎不会漏掉攻击。正式结果中 false negative 为 1，来源是一个真实攻击单点簇被 Qwen 判为 benign。这个结果说明方法总体达到了“低漏报、可解释、低成本分诊”的目标，但自动 benign 策略必须谨慎，尤其是单点告警不应直接彻底丢弃。
 
 ![Token cost](experiments/assets/fig7_token_cost.png)
 
-图 7 展示按需 LLM 与纯 LLM 的 Token 成本对比。当前 Qwen smoke test 中，实际只处理 1 个低置信度簇，消耗约 1130 input tokens 和 66 output tokens；如果对所有簇都进行 cluster-level LLM 分诊，估算成本会高出两个数量级以上。这个结果支持本项目的核心论点：LLM 应作为按需分诊器，而不是全量日志处理器。
+图 7 展示按需 LLM 与纯 LLM 的 Token 成本对比。正式实验中，Qwen 只处理 20 个簇，输入 4065 tokens，输出 997 tokens，总计 5062 tokens。如果对全部 9440 个簇都做 cluster-level LLM 分诊，估算成本约为 2389264 tokens。按需调用仅占该估算成本的约 0.21%，节省约 99.79% 的 Token。这是本项目最清晰的工程收益：LLM 被限制在少量疑难簇上，成本随低置信度样本数增长，而不是随全量告警数增长。
 
 ![Qwen triage](experiments/assets/fig8_qwen_triage.png)
 
-图 8 展示 Qwen 对低置信度簇的分诊输出，以及自动判为 benign 后减少的噪声告警数量。在 smoke test 中，Qwen 对一个 14 条告警的低置信度簇输出 `benign / none`，置信度为 0.95，理由是该簇主要是 TLS 与 Dovecot 登录成功类告警，没有明显攻击迹象。这证明本地 Qwen3-8B 调用、JSON 解析、置信度校验和安全 fallback 机制均已跑通。
+图 8 展示 Qwen 对低置信度簇的分诊输出。20 个簇中，18 个被判为 benign，2 个被判为 uncertain。Qwen 的解释大多指向 ClamAV 数据库更新、监控 CPU 指标异常、DNS 日志异常、HTTP method 频率异常等运维或低上下文告警。这说明 Qwen 能给出结构化分诊理由，也能把不确定 DNS 异常保守地保留为 uncertain。但其中 1 个真实攻击告警被解释为 CPU 指标异常并判为 benign，说明 LLM 在缺少上下文的单点告警上存在误判风险。
 
-综合以上结果，目前可以得到三个结论。第一，AIT-ADS/AIT-ADS-A 数据能够支撑本项目的告警降噪与分诊实验，尤其是多场景、多阶段攻击结构适合展示 SOC 告警处理流程。第二，AlertBERT 作为小模型 baseline 能完成告警聚类和压缩，为后续低置信度筛选提供基础。第三，Qwen3-8B 不需要处理全部告警，只需要处理少量不确定簇，就可以给出结构化、可校验的分诊结论和解释，从而在成本、速度和安全性之间取得更实际的平衡。
+## 5 结论
 
+第一，数据和流程满足课程项目要求，能够展示真实攻击与误报混杂场景下的 SOC 告警降噪。第二，AlertBERT 相比 TimeDelta 的主要优势是显著提高 precision 和 TNR，降低噪声误合并；但它不是在 F1 上全面优于 TimeDelta，因此报告中应强调 trade-off，而不是简单宣称 SOTA 全面胜出。第三，Hybrid 方法达到了“低成本调用 LLM”的预期：只处理 0.21% 的簇，节省约 99.79% 的 cluster-level LLM Token 成本，同时保持接近 1.0 的攻击召回。第四，Qwen 的分诊解释有实际价值，但本次实验出现 1 个 false negative，说明高不确定度单点告警即使被判 benign，也更适合作为低优先级复核，而不是自动丢弃。
 
-## 5. 安全评估
+# 杂项
+## 安全评估
 本方案的安全风险主要来自三类错误：误把真实攻击判为 benign、误把噪声判为 attack 导致分析师负担没有下降、以及 Qwen 输出格式错误或解释不可靠。为降低风险，实验脚本采用保守策略：低置信度簇只允许被标记为 `attack`、`benign` 或 `uncertain`；低置信度、JSON 解析失败和低置信度输出全部进入 `uncertain`；`uncertain` 和 `attack` 都保留给分析师复核。也就是说，LLM 的主要作用是帮助排序和解释，而不是直接执行自动封禁、删除或忽略高危事件。
+TODO：我也不知道这个“安全评估”应该写什么，现在这个仅用作占位
 
-## 6. 方案的学术先进性与对比维度
-为了响应“时效性、新技术与现有工作对比”的核心要求，本方案在设计上具备以下考量：
-1. 时效性与新技术 (Timeliness & New Tech)：
-   - 本方案没有采用老旧的机器学习算法（如传统的孤立森林、SVM），而是直接采用了前沿的无监督掩码语言模型（AlertBERT，代表领域最新 SOTA 进展）与最新的开源大语言模型（Qwen-3-8B，代表最新的生成式 AI 推理能力）。两者均为当前最具时效性的新工作/新技术。
+
+## 时效性与对比维度说明
+1. 时效性：本方案没有采用老旧的机器学习算法（如传统的孤立森林、SVM），而是直接采用了前沿的无监督掩码语言模型（AlertBERT，代表领域最新 SOTA 进展）与最新的小型开源LLM（Qwen-3-8B，代表最新的生成式 AI 推理能力）。两者均为当前最具时效性的新工作/新技术。
 2. 与现有工作对比 (Comparison with Existing Work)：
    本项目的实验将形成严谨的三维对比：
    - vs. 现有最先进的小模型工作 (SOTA Baseline)：以纯 AlertBERT 为基线，对比我们在引入 LLM 分诊后，对高难/模糊告警分类准确率的直接提升幅度。
    - vs. 现有直接使用大模型的暴力方案 (Pure LLM)：当前的另一类热门研究是直接让 LLM 吞噬所有日志。我们将通过统计我们“按需推理”架构的 Token 消耗，并在报告中量化对比“混合架构”与“纯大模型架构”在推理开销上的数量级差异，证明我们在实际工程与学术效益上的优越性。
+
+## 组内分工
+TODO: 待填充

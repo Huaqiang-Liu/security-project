@@ -86,40 +86,6 @@ def set_style() -> None:
     )
 
 
-def fig_pipeline(asset_dir: Path) -> Path:
-    fig, ax = plt.subplots(figsize=(13.5, 3.2))
-    ax.axis("off")
-    boxes = [
-        ("AIT-ADS-A\nmixed alerts", 0.04, COLORS["blue"]),
-        ("TimeDelta\nbaseline", 0.22, COLORS["gray"]),
-        ("AlertBERT\nsemantic clusters", 0.40, COLORS["green"]),
-        ("Uncertainty\nscoring", 0.58, COLORS["orange"]),
-        ("Qwen3-8B\non-demand triage", 0.76, COLORS["red"]),
-        ("Analyst queue\nattack / uncertain", 0.91, COLORS["dark"]),
-    ]
-    for text, x, color in boxes:
-        ax.text(
-            x,
-            0.55,
-            text,
-            ha="center",
-            va="center",
-            color="white",
-            fontsize=11,
-            fontweight="bold",
-            bbox={"boxstyle": "round,pad=0.55,rounding_size=0.08", "fc": color, "ec": color},
-            transform=ax.transAxes,
-        )
-    for i in range(len(boxes) - 1):
-        x0 = boxes[i][1] + 0.065
-        x1 = boxes[i + 1][1] - 0.065
-        ax.annotate("", xy=(x1, 0.55), xytext=(x0, 0.55), arrowprops={"arrowstyle": "->", "lw": 2, "color": COLORS["dark"]}, xycoords=ax.transAxes)
-    ax.text(0.5, 0.15, "Small model handles scale; LLM handles only low-confidence clusters.", ha="center", color=COLORS["gray"], transform=ax.transAxes)
-    path = asset_dir / "fig1_pipeline.png"
-    save(fig, path)
-    return path
-
-
 def fig_attack_labels(asset_dir: Path) -> Path:
     labels_path = ROOT / "data" / "ait_ads" / "labels.csv"
     labels = pd.read_csv(labels_path)
@@ -211,20 +177,35 @@ def fig_metrics(results_dir: Path, asset_dir: Path) -> Path:
     hybrid = load_json(results_dir / "hybrid_metrics.json", {})
     td_noise = td.get("noise", {}) if isinstance(td, dict) else {}
     ab_noise = ab.get("alertbert_macro_noise", {}) if isinstance(ab, dict) else {}
-    rows = [
-        ("TimeDelta", finite_metric(td_noise, "f1")),
-        ("AlertBERT", finite_metric(ab_noise, "f1")),
-        ("Hybrid triage", finite_metric(hybrid, "attack_f1")),
-    ]
-    fig, ax = plt.subplots(figsize=(8.5, 4.8))
-    values = [0 if v is None else v for _, v in rows]
-    bars = ax.bar([r[0] for r in rows], values, color=[COLORS["gray"], COLORS["green"], COLORS["orange"]])
+    methods = ["TimeDelta", "AlertBERT", "Hybrid triage"]
+    metrics = ["precision", "recall", "tnr", "f1"]
+    values = {
+        "TimeDelta": [finite_metric(td_noise, k) for k in metrics],
+        "AlertBERT": [finite_metric(ab_noise, k) for k in metrics],
+        "Hybrid triage": [
+            finite_metric(hybrid, "attack_precision"),
+            finite_metric(hybrid, "attack_recall"),
+            None,
+            finite_metric(hybrid, "attack_f1"),
+        ],
+    }
+    fig, ax = plt.subplots(figsize=(10.5, 5.2))
+    x = np.arange(len(metrics))
+    width = 0.24
+    offsets = [-width, 0, width]
+    colors = [COLORS["gray"], COLORS["green"], COLORS["orange"]]
+    for method, offset, color in zip(methods, offsets, colors):
+        vals = [0 if v is None else v for v in values[method]]
+        bars = ax.bar(x + offset, vals, width=width, label=method, color=color)
+        for bar, raw in zip(bars, values[method]):
+            label = "n/a" if raw is None else f"{raw:.2f}"
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.025, label, ha="center", fontsize=8, rotation=0)
     ax.set_ylim(0, 1.0)
-    ax.set_title("F1 comparison (available result set)")
-    ax.set_ylabel("F1")
-    for bar, (_, value) in zip(bars, rows):
-        label = "n/a" if value is None else f"{value:.3f}"
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.03, label, ha="center")
+    ax.set_title("Method comparison on formal experiment outputs")
+    ax.set_ylabel("Score")
+    ax.set_xticks(x)
+    ax.set_xticklabels(["Precision", "Recall", "TNR", "F1"])
+    ax.legend(loc="upper center", ncols=3, bbox_to_anchor=(0.5, -0.12))
     path = asset_dir / "fig6_metric_comparison.png"
     save(fig, path)
     return path
@@ -278,7 +259,6 @@ def fig_qwen_decisions(results_dir: Path, asset_dir: Path) -> Path:
 
 def write_manifest(paths: list[Path], results_dir: Path, asset_dir: Path) -> None:
     captions = {
-        "fig1_pipeline.png": "Hybrid pipeline: AlertBERT handles scale, Qwen handles low-confidence clusters.",
         "fig2_attack_phase_matrix.png": "AIT-ADS contains multi-scenario, multi-phase attack labels.",
         "fig3_cluster_overview.png": "Alert/noise composition and largest AlertBERT clusters in the selected result set.",
         "fig4_uncertainty_distribution.png": "Only the highest-uncertainty clusters are handed off to Qwen.",
@@ -308,7 +288,6 @@ def main() -> None:
     clusters = pd.read_csv(results_dir / "clusters.csv")
     uncertainty = pd.read_csv(results_dir / "cluster_uncertainty.csv")
     paths = [
-        fig_pipeline(asset_dir),
         fig_attack_labels(asset_dir),
         fig_cluster_overview(clusters, asset_dir),
         fig_uncertainty(uncertainty, asset_dir),

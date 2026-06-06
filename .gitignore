@@ -20,3 +20,5 @@ pretrained_models/
 AlertBERT/saved_models
 data/
 outputs/smoke*
+
+log.txt
